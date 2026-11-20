@@ -1,0 +1,79 @@
+# What tools/preview.py shows (docs/PREVIEW.md): Luzern and Solothurn, their answers in transport.opendata.ch's own shape (with the
+# `fields[]` of the manifest). The moments are made from the time of the render ("{epoch+4m}"), so the countdown never
+# runs out.
+tiles:
+  - tile: trip
+    name: Solothurn to Zürich HB
+    options: { stop: { value: "8500207", label: Solothurn }, dest: { value: "8503000", label: Zürich HB }, look: red }
+    sizes: [2x2, 1x1]
+    then: [[0.5, 0.24]]
+  - tile: next
+    name: Luzern board
+    options: { stop: { value: "8505000", label: Luzern }, look: board, kinds: true }
+    sizes: [2x2]
+  - tile: next
+    name: Luzern by transport
+    options: { stop: { value: "8505000", label: Luzern }, kinds: true }
+    sizes: [2x1]
+  - tile: trip
+    name: Direct board
+    options: { stop: { value: "8500207", label: Solothurn }, dest: { value: "8503000", label: Zürich HB }, direct: true, walk: 5, look: board }
+    sizes: [2x1]
+  - tile: next
+    name: Leave now
+    options: { stop: { value: "8505000", label: Luzern }, walk: 4 }
+    sizes: [1x1, 2x1]
+  - tile: trip
+    name: No stops yet
+    sizes: [1x1]
+
+answers:
+  departures:
+    stationboard:
+      - { category: IR, number: "70", to: Zürich HB, stop: { departureTimestamp: "{epoch+4m}", delay: 0, platform: "7", prognosis: { platform: null } } }
+      - { category: B, number: "1", to: "Kriens, Obernau", stop: { departureTimestamp: "{epoch+6m}", delay: 2, platform: "C", prognosis: { platform: null } } }
+      - { category: IC, number: "21", to: Lugano, stop: { departureTimestamp: "{epoch+9m}", delay: 3, platform: "4", prognosis: { platform: null } } }
+      - { category: BAT, number: "3602", to: Flüelen, stop: { departureTimestamp: "{epoch+12m}", delay: null, platform: "1", prognosis: { platform: null } } }
+      - { category: S, number: "41", to: Rotkreuz, stop: { departureTimestamp: "{epoch+15m}", delay: 0, platform: "12", prognosis: { platform: "11" } } }
+      - { category: B, number: "6", to: "Luzern, Matthof", stop: { departureTimestamp: "{epoch+18m}", delay: 0, platform: "D", prognosis: { platform: null } } }
+      - { category: IR, number: "26", to: Basel SBB, stop: { departureTimestamp: "{epoch+24m}", delay: 0, platform: "6", prognosis: { platform: null } } }
+      - { category: S, number: "1", to: Baar, stop: { departureTimestamp: "{epoch+31m}", delay: 1, platform: "14", prognosis: { platform: null } } }
+  lines:
+    stationboard:
+      - { category: S, number: "6", to: Baden }
+      - { category: IC, number: "5", to: Rorschach }
+  directions:
+    stationboard:
+      - { category: S, number: "6", to: Baden }
+      - { category: IC, number: "5", to: Rorschach }
+  stops:
+    stations:
+      - { id: "8503000", name: Zürich HB }
+  connections:
+    connections:
+      - { from: { departureTimestamp: "{epoch+6m}", delay: 2, platform: "1", prognosis: { capacity2nd: 2, platform: null } }, to: { arrivalTimestamp: "{epoch+61m}" }, transfers: 0, sections: [{ journey: { category: IR, number: "55" } }] }
+      - { from: { departureTimestamp: "{epoch+34m}", delay: 0, platform: "1", prognosis: { capacity2nd: 1, platform: "2" } }, to: { arrivalTimestamp: "{epoch+88m}" }, transfers: 0, sections: [{ journey: { category: IC, number: "5" } }] }
+      - { from: { departureTimestamp: "{epoch+48m}", delay: null, platform: "4", prognosis: { capacity2nd: 3, platform: null } }, to: { arrivalTimestamp: "{epoch+122m}" }, transfers: 1, sections: [{ journey: { category: S, number: "20" } }, { journey: { category: IC, number: "1" } }] }
+      - { from: { departureTimestamp: "{epoch+66m}", delay: 0, platform: "1", prognosis: { capacity2nd: 1, platform: null } }, to: { arrivalTimestamp: "{epoch+121m}" }, transfers: 0, sections: [{ journey: { category: IR, number: "55" } }] }
+      - { from: { departureTimestamp: "{epoch+94m}", delay: 0, platform: "1", prognosis: { capacity2nd: null, platform: null } }, to: { arrivalTimestamp: "{epoch+148m}" }, transfers: 0, sections: [{ journey: { category: IC, number: "5" } }] }
+  legs:
+    connections:
+      - sections:
+          - journey: { category: IR, number: "55", to: "Zürich HB" }
+            walk: null
+            departure: { station: { name: "Solothurn" }, departureTimestamp: "{epoch+6m}", delay: 2, platform: "1", prognosis: { platform: null } }
+            arrival: { station: { name: "Zürich HB" }, arrivalTimestamp: "{epoch+61m}", platform: "33" }
+      - sections:
+          - journey: { category: IC, number: "5", to: "Rorschach" }
+            walk: null
+            departure: { station: { name: "Solothurn" }, departureTimestamp: "{epoch+34m}", delay: 0, platform: "2", prognosis: { platform: null } }
+            arrival: { station: { name: "Zürich HB" }, arrivalTimestamp: "{epoch+88m}", platform: "32" }
+      - sections:
+          - journey: { category: S, number: "20", to: "Olten" }
+            walk: null
+            departure: { station: { name: "Solothurn" }, departureTimestamp: "{epoch+48m}", delay: 0, platform: "4", prognosis: { platform: null } }
+            arrival: { station: { name: "Olten" }, arrivalTimestamp: "{epoch+79m}", platform: "7" }
+          - journey: { category: IC, number: "1", to: "St. Gallen" }
+            walk: null
+            departure: { station: { name: "Olten" }, departureTimestamp: "{epoch+87m}", delay: 0, platform: "8", prognosis: { platform: null } }
+            arrival: { station: { name: "Zürich HB" }, arrivalTimestamp: "{epoch+122m}", platform: "16" }

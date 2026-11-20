@@ -1,0 +1,199 @@
+# The plugin's manifest: who made it, what it may do, and what the app shows. No code and no words: every name, label
+# and hint is a key into translations/<language>.json, part "app". docs/MANIFEST.md has every field.
+id: swiss_departures
+version: 1.0.0
+# 0.28: the station board's dark face (CardColor::INSTRUMENT). 0.27: the legs of a connection, a fetch the card asks
+# for (`asked`), and more than eight fields in a map. 0.26: card colours and options in a group. 0.12: a stop found by
+# searching. 0.9: tones and fills (red badges, "Leave now").
+api: "0.28"
+icon: train
+maintainer: synergyx26
+license: MIT
+stage: beta
+topics: [travel]
+requires:
+  esphome: 2026.6.2
+boards: any
+flash_kb: 14
+
+permissions:
+  network: [transport.opendata.ch]
+attributes: [cloud]
+privacy: https://github.com/synergyx26/tessera-swiss-departures#privacy
+
+tiles:
+  - id: next
+    name: tile_name
+    icon: train
+    sizes: { min: 1x1, max: 3x2, full: true }
+    memory: 1400
+    data: departures
+    example: tile_example
+    # How the editor draws the tile from its data (it cannot run the C++): the first departure's line in a badge,
+    # where it goes, and the minutes until it leaves as planned.
+    preview: { badge: "{line}", title: "{to}", countdown: plan }
+    options:
+      - { id: stop, kind: choice, options_from: stops, search: true, label: stop, hint: stop_hint }
+      - id: kind
+        kind: choice
+        label: kind
+        hint: kind_hint
+        default: all
+        choices:
+          - { value: all, label: kind_all }
+          - { value: train, label: kind_train }
+          - { value: tram, label: kind_tram }
+          - { value: bus, label: kind_bus }
+          - { value: ship, label: kind_ship }
+          - { value: cableway, label: kind_cableway }
+      - { id: line, kind: choice, options_from: lines, label: line, hint: line_hint }
+      - { id: towards, kind: choice, options_from: directions, label: towards, hint: towards_hint }
+      - { id: walk, kind: number, min: 0, max: 30, step: 1, unit: min, default: 0, label: walk, hint: walk_hint }
+      - { id: late, kind: toggle, default: true, label: late, hint: late_hint }
+      - { id: track, kind: toggle, default: true, label: track, hint: track_hint }
+      - id: look
+        kind: choice
+        label: look
+        hint: look_hint
+        group: group_colours
+        default: tessera
+        choices:
+          - { value: tessera, label: look_tessera }
+          - { value: red, label: look_red }
+          - { value: board, label: look_board }
+      - { id: kinds, kind: toggle, default: false, label: kinds, hint: kinds_hint, group: group_colours }
+      - { id: alarm, kind: toggle, default: true, label: alarm, hint: alarm_hint, group: group_colours }
+
+  # Every connection from one stop to another: the trains that take you there (direct or with changes), whatever their
+  # final destination. Solothurn to Zürich HB is the IC 5 (on to Rorschach) and the IR 55.
+  - id: trip
+    name: trip_name
+    icon: train
+    sizes: { min: 1x1, max: 3x2, full: true }
+    memory: 1700
+    data: connections
+    example: trip_example
+    preview: { badge: "{cat} {line}", countdown: plan }
+    options:
+      - { id: stop, kind: choice, options_from: stops, search: true, label: trip_from, hint: stop_hint }
+      - { id: dest, kind: choice, options_from: stops, search: true, label: trip_to, hint: trip_to_hint }
+      - { id: direct, kind: toggle, default: false, label: direct, hint: direct_hint }
+      - { id: walk, kind: number, min: 0, max: 30, step: 1, unit: min, default: 0, label: walk, hint: walk_hint }
+      - { id: late, kind: toggle, default: true, label: late, hint: late_hint }
+      - { id: track, kind: toggle, default: true, label: track, hint: track_hint }
+      - id: look
+        kind: choice
+        label: look
+        hint: look_hint
+        group: group_colours
+        default: tessera
+        choices:
+          - { value: tessera, label: look_tessera }
+          - { value: red, label: look_red }
+          - { value: board, label: look_board }
+      - { id: kinds, kind: toggle, default: false, label: kinds, hint: kinds_hint, group: group_colours }
+      - { id: alarm, kind: toggle, default: true, label: alarm, hint: alarm_hint, group: group_colours }
+
+# A tap on a tile opens this card: every departure of a board, or every connection with, on a tap, its legs.
+cards:
+  - { id: list, name: card_name }
+
+fetch:
+  # Stops by name, for the search in the inspector: "Zürich HB", "Bern, Bahnhof", "Lausanne, Flon". The option keeps
+  # the stop's id (the UIC/DiDok number, 8503000 for Zürich HB) and its name.
+  - id: stops
+    url: https://transport.opendata.ch/v1/locations?query={search}&type=station
+    every: 1d
+    map:
+      items: "$.stations[*]"
+      value: id
+      label: name
+
+  # The departures of one stop, every minute. The service answers with the next 80 departures of every line (of the
+  # chosen kind; "all" is no kind, so it keeps every one); `fields[]` keeps the answer to the few fields the tile
+  # draws, about 12 KB instead of 500. The add-on keeps the chosen line and direction (all when none is chosen), in
+  # timetable order, and sends eight of them. The screen adds the delay and counts down on its own clock.
+  - id: departures
+    url: "https://transport.opendata.ch/v1/stationboard?id={stop}&limit=80&transportations[]={kind}&fields[]=stationboard/category&fields[]=stationboard/number&fields[]=stationboard/to&fields[]=stationboard/stop/departureTimestamp&fields[]=stationboard/stop/delay&fields[]=stationboard/stop/platform&fields[]=stationboard/stop/prognosis/platform"
+    every: 60s
+    map:
+      items: "$.stationboard[*]"
+      fields:
+        cat: category
+        line: number
+        to: to
+        plan: { path: stop.departureTimestamp, as: epoch }
+        delay: { path: stop.delay, as: number }
+        track: stop.platform
+        moved: stop.prognosis.platform
+      where: { line: "{line}", to: "{towards}" }
+      sort: plan
+      limit: 8
+
+  # The lines that leave this stop, for the Line choice in the inspector. The same address as the departures, so the
+  # app asks the service once for both.
+  - id: lines
+    url: "https://transport.opendata.ch/v1/stationboard?id={stop}&limit=80&transportations[]={kind}&fields[]=stationboard/category&fields[]=stationboard/number&fields[]=stationboard/to&fields[]=stationboard/stop/departureTimestamp&fields[]=stationboard/stop/delay&fields[]=stationboard/stop/platform&fields[]=stationboard/stop/prognosis/platform"
+    every: 1h
+    map:
+      items: "$.stationboard[*]"
+      value: number
+      label: [category, number]
+
+  # Where the departures of this stop go, for the Direction choice: in Switzerland one stop id serves both sides of
+  # the street, so this is how a tile keeps to one direction.
+  - id: directions
+    url: "https://transport.opendata.ch/v1/stationboard?id={stop}&limit=80&transportations[]={kind}&fields[]=stationboard/category&fields[]=stationboard/number&fields[]=stationboard/to&fields[]=stationboard/stop/departureTimestamp&fields[]=stationboard/stop/delay&fields[]=stationboard/stop/platform&fields[]=stationboard/stop/prognosis/platform"
+    every: 1h
+    map:
+      items: "$.stationboard[*]"
+      value: to
+      label: to
+
+  # The connections from one stop to another, every minute: the service's own journey planner, so a train that runs
+  # through your destination counts as well as one that ends there. Twelve asked from now on, ten sent; the screen leaves out the ones
+  # with changes when the tile asks for direct trains only (the service's own `direct` does nothing). `fields[]` keeps
+  # the answer to what the tile draws: about 2.5 KB instead of 50.
+  - id: connections
+    url: "https://transport.opendata.ch/v1/connections?from={stop}&to={dest}&limit=12&fields[]=connections/from/departureTimestamp&fields[]=connections/from/delay&fields[]=connections/from/platform&fields[]=connections/from/prognosis/platform&fields[]=connections/to/arrivalTimestamp&fields[]=connections/transfers&fields[]=connections/sections/journey/category&fields[]=connections/sections/journey/number&fields[]=connections/from/prognosis/capacity2nd"
+    every: 60s
+    map:
+      items: "$.connections[*]"
+      fields:
+        cat: sections[0].journey.category
+        line: sections[0].journey.number
+        plan: { path: from.departureTimestamp, as: epoch }
+        delay: { path: from.delay, as: number }
+        track: from.platform
+        moved: from.prognosis.platform
+        arrive: { path: to.arrivalTimestamp, as: epoch }
+        changes: { path: transfers, as: number }
+        load: { path: from.prognosis.capacity2nd, as: number }
+        cat2: sections[1].journey.category      # a connection that starts with a walk: its first train
+        line2: sections[1].journey.number
+      sort: plan
+      limit: 10   # twelve asked, so "Direct only" keeps enough; ten sent, about 1.8 KB of the tile's 2.6
+
+  # The legs of one connection, which the card asks for when a finger taps it: the service's journey planner again,
+  # for the connections from its two stops from its time of departure on. Three, because the planner does not always
+  # put the one asked for first; the card keeps the one that leaves at that time. Each leg: the train, where it goes, where and
+  # when you board and get off, the platforms; or a walk and its seconds.
+  - id: legs
+    asked: [from, to, date, time]
+    url: "https://transport.opendata.ch/v1/connections?from={from}&to={to}&date={date}&time={time}&limit=3&fields[]=connections/sections/journey/category&fields[]=connections/sections/journey/number&fields[]=connections/sections/journey/to&fields[]=connections/sections/departure&fields[]=connections/sections/arrival&fields[]=connections/sections/walk"
+    every: 2m
+    map:
+      items: "$.connections[*].sections[*]"
+      fields:
+        cat: journey.category
+        line: journey.number
+        dir: journey.to
+        dep: { path: departure.departureTimestamp, as: epoch }
+        from: departure.station.name
+        ftrack: departure.platform
+        moved: departure.prognosis.platform
+        delay: { path: departure.delay, as: number }
+        arr: { path: arrival.arrivalTimestamp, as: epoch }
+        to: arrival.station.name
+        ttrack: arrival.platform
+        walk: { path: walk.duration, as: number }
