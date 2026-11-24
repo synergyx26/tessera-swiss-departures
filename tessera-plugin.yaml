@@ -1,7 +1,7 @@
 # The plugin's manifest: who made it, what it may do, and what the app shows. No code and no words: every name, label
 # and hint is a key into translations/<language>.json, part "app". docs/MANIFEST.md has every field.
 id: swiss_departures
-version: 1.0.0
+version: 1.1.0
 # 0.28: the station board's dark face (CardColor::INSTRUMENT). 0.27: the legs of a connection, a fetch the card asks
 # for (`asked`), and more than eight fields in a map. 0.26: card colours and options in a group. 0.12: a stop found by
 # searching. 0.9: tones and fills (red badges, "Leave now").
@@ -26,7 +26,8 @@ tiles:
     name: tile_name
     icon: train
     sizes: { min: 1x1, max: 3x2, full: true }
-    memory: 1400
+    # Up to 8 rows of a badge and four labels (~480 bytes each) and a note: about 4.2 KB on a large list.
+    memory: 4300
     data: departures
     example: tile_example
     # How the editor draws the tile from its data (it cannot run the C++): the first departure's line in a badge,
@@ -45,7 +46,7 @@ tiles:
           - { value: tram, label: kind_tram }
           - { value: bus, label: kind_bus }
           - { value: ship, label: kind_ship }
-          - { value: cableway, label: kind_cableway }
+          - { value: cable_car, label: kind_cableway }   # the service's word: "cableway" finds nothing
       - { id: line, kind: choice, options_from: lines, label: line, hint: line_hint }
       - { id: towards, kind: choice, options_from: directions, label: towards, hint: towards_hint }
       - { id: walk, kind: number, min: 0, max: 30, step: 1, unit: min, default: 0, label: walk, hint: walk_hint }
@@ -70,7 +71,8 @@ tiles:
     name: trip_name
     icon: train
     sizes: { min: 1x1, max: 3x2, full: true }
-    memory: 1700
+    # As Next departure, plus the title (two names and the arrow icon).
+    memory: 4600
     data: connections
     example: trip_example
     preview: { badge: "{cat} {line}", countdown: plan }
@@ -155,7 +157,7 @@ fetch:
   # with changes when the tile asks for direct trains only (the service's own `direct` does nothing). `fields[]` keeps
   # the answer to what the tile draws: about 2.5 KB instead of 50.
   - id: connections
-    url: "https://transport.opendata.ch/v1/connections?from={stop}&to={dest}&limit=12&fields[]=connections/from/departureTimestamp&fields[]=connections/from/delay&fields[]=connections/from/platform&fields[]=connections/from/prognosis/platform&fields[]=connections/to/arrivalTimestamp&fields[]=connections/transfers&fields[]=connections/sections/journey/category&fields[]=connections/sections/journey/number&fields[]=connections/from/prognosis/capacity2nd"
+    url: "https://transport.opendata.ch/v1/connections?from={stop}&to={dest}&limit=12&fields[]=connections/from/departureTimestamp&fields[]=connections/from/delay&fields[]=connections/from/platform&fields[]=connections/from/prognosis/platform&fields[]=connections/to/arrivalTimestamp&fields[]=connections/transfers&fields[]=connections/sections/journey/category&fields[]=connections/sections/journey/number&fields[]=connections/from/prognosis/capacity2nd&fields[]=connections/to/delay"
     every: 60s
     map:
       items: "$.connections[*]"
@@ -169,6 +171,7 @@ fetch:
         arrive: { path: to.arrivalTimestamp, as: epoch }
         changes: { path: transfers, as: number }
         load: { path: from.prognosis.capacity2nd, as: number }
+        arrlate: { path: to.delay, as: number }   # minutes late at the destination
         cat2: sections[1].journey.category      # a connection that starts with a walk: its first train
         line2: sections[1].journey.number
       sort: plan

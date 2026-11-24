@@ -9,7 +9,7 @@ Not made by or affiliated with SBB CFF FFS or any transport operator.
 
 ## What it adds
 
-**Next departure.** The departures of one stop. On a single cell, the next one as big as the cell allows, with its line
+**Next departure.** The departures of one stop, under its name. On a single cell, the next one as big as the cell allows, with its line
 (S6, IC5, 14) and where it goes above it, and under it the platform and the two after it. On a tile of two columns or
 more, a list: one row per departure with its platform and countdown.
 
@@ -48,12 +48,13 @@ Back returns to the list.
 ## Good to know
 
 - Tessera asks transport.opendata.ch once a minute per stop or connection, for every screen and tile together. The
-  screen counts down on its own clock in between: the next departure to the second (4:12, then 0:42), the ones after it
-  in minutes. The editor's preview shows whole minutes, by the timetable.
+  screen counts down on its own clock in between, in minutes ("8 min"), and the next departure to the second in its
+  last two minutes (1:42, 0:42). A time an hour or more away is shown as a time of day.
 - A departure that runs a minute or more late gets "+2'" behind where it goes, and its countdown includes the delay.
-  Turn **Show delays** off to leave the "+2'" out.
-- The platform (Pl. 7) or stand (Pl. D) shows when the service knows it. A platform that changed shows the new one,
-  in full ink on a list. Turn **Show platform** off to leave it out.
+  A connection's arrival time includes its delay at the destination too. Turn **Show delays** off to leave the "+2'"
+  out.
+- The platform of a train (Pl. 7) or the stand of a bus or tram (Stand D) shows when the service knows it. A platform
+  that changed shows the new one, in full ink on a list. Turn **Show platform** off to leave it out.
 - **Direction** keeps the departures whose *last* stop is that place. A Swiss stop usually serves both directions with
   one id, so this is how a tile keeps to one side. For trains that only pass through a place, use **Connections**.
 - **Line** matches by line number. At a big station a train and a bus can share a number (S5 and IC5); set
@@ -61,11 +62,14 @@ Back returns to the list.
 - The Connections tile asks the journey planner for the next connections from now. A train that already left by the
   timetable but runs late is not among them.
 - The legs of a connection are asked when you tap it, not before, so the card may say "Asking for the route" for a
-  moment.
-- A time an hour or more away is shown as a time of day; a departure that is due says "now".
+  moment; while the card stays open they are asked again every minute and a half. A connection with more legs than
+  fit says how many more there are.
+- **Colour when it's time to leave** needs a walk to the stop; without one it does nothing.
+- A departure that is due says "now".
 - When the service does not answer, the tile keeps the last times it had and says they may be old.
-- Works on every board. Built and used on a Guition 4-inch (ESP32-S3); checked on the bench on the CYD, a 4.3-inch
-  standing and a 10-inch screen.
+- In English, German, French and Italian: it follows the screen's language.
+- Works on every board. Made and used daily on a Guition 4-inch (ESP32-S3), and drawn on the CYD, a 4.3-inch standing
+  and a 10-inch screen as well.
 
 ## Privacy
 

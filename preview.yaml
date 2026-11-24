@@ -2,15 +2,15 @@
 # `fields[]` of the manifest). The moments are made from the time of the render ("{epoch+4m}"), so the countdown never
 # runs out.
 tiles:
+  - tile: next
+    name: Luzern board
+    options: { stop: { value: "8505000", label: Luzern }, look: board, kinds: true }
+    sizes: [2x2]
   - tile: trip
     name: Solothurn to Zürich HB
     options: { stop: { value: "8500207", label: Solothurn }, dest: { value: "8503000", label: Zürich HB }, look: red }
     sizes: [2x2, 1x1]
     then: [[0.5, 0.24]]
-  - tile: next
-    name: Luzern board
-    options: { stop: { value: "8505000", label: Luzern }, look: board, kinds: true }
-    sizes: [2x2]
   - tile: next
     name: Luzern by transport
     options: { stop: { value: "8505000", label: Luzern }, kinds: true }

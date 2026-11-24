@@ -25,7 +25,7 @@ static Kind kind_of(const char *cat) {
   if (one_of(cat, {"T", "TRAM", "M", "NFT", "TN"})) return TRAM;
   if (one_of(cat, {"B", "BUS", "NFB", "NFO", "BN", "EXB", "KB", "EV", "N"})) return BUS;
   if (one_of(cat, {"BAT", "FAE"})) return BOAT;
-  if (one_of(cat, {"FUN", "PB", "GB", "SL", "LB", "ASC"})) return CABLE;
+  if (one_of(cat, {"FUN", "PB", "GB", "SL", "LB", "ASC", "CC"})) return CABLE;
   return RAIL;
 }
 
@@ -57,8 +57,56 @@ static Look look_of(const char *look) {
   return Look::TESSERA;
 }
 
+// A day's number since 1970 as year, month and day (proleptic Gregorian calendar).
+static void civil_from_days(int64_t z, int &y, int &m, int &d) {
+  z += 719468;
+  const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+  const int64_t doe = z - era * 146097;
+  const int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const int64_t mp = (5 * doy + 2) / 153;
+  d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+  m = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
+  y = static_cast<int>(yoe + era * 400 + (m <= 2));
+}
+
+static int64_t days_from_civil(int y, int m, int d) {
+  y -= m <= 2;
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const int64_t yoe = y - era * 400;
+  const int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+// The last Sunday of a month at 01:00 UTC, when Europe changes its clocks.
+static int64_t eu_switch(int year, int month) {
+  int64_t day = days_from_civil(year, month + 1, 1) - 1;   // the month's last day
+  const int64_t weekday = ((day + 4) % 7 + 7) % 7;         // 0 Sunday (1970-01-01 was a Thursday)
+  day -= weekday;
+  return day * 86400 + 3600;
+}
+
+// A moment as Swiss local time, as transport.opendata.ch reads a date and time: CET, CEST in summer. The screen's own
+// zone may be another one, so this does not use tessera::local_time.
+static void swiss_time(uint32_t epoch, int &y, int &mo, int &d, int &h, int &mi) {
+  int uy, um, ud;
+  civil_from_days(epoch / 86400, uy, um, ud);
+  const int64_t t = epoch;
+  const bool summer = t >= eu_switch(uy, 3) && t < eu_switch(uy, 10);
+  const int64_t local = t + (summer ? 7200 : 3600);
+  civil_from_days(local / 86400, y, mo, d);
+  h = static_cast<int>((local % 86400) / 3600);
+  mi = static_cast<int>((local % 3600) / 60);
+}
+
 // A pick of a choice found by searching is {"value", "label"}; an option nobody filled in is "".
-static std::string pick_value(JsonVariantConst v) { return v.is<JsonObjectConst>() ? std::string(v["value"] | "") : ""; }
+static std::string pick_value(JsonVariantConst v) {
+  if (!v.is<JsonObjectConst>()) return "";
+  JsonVariantConst value = v["value"];
+  if (value.is<long>()) return std::to_string(value.as<long>());
+  return value | "";
+}
 static std::string pick_label(JsonVariantConst v) { return v.is<JsonObjectConst>() ? std::string(v["label"] | "") : ""; }
 
 // One item of the departures or connections fetch.
@@ -78,9 +126,12 @@ static bool parse(JsonObjectConst item, bool trip, const tessera::Plugin *plugin
   d.late = std::max(0, static_cast<int>(item["delay"] | 0.0f));
   d.at = d.plan + static_cast<uint32_t>(d.late) * 60;
   if (trip) {
-    d.changes = item["changes"] | 0;
+    d.changes = static_cast<int>(item["changes"] | 0.0f);
     d.arrive = item["arrive"] | 0u;
-    d.load = item["load"] | 0;
+    // When it arrives as expected: the timetable's time plus the delay at the destination.
+    const int arrive_late = std::max(0, static_cast<int>(item["arrlate"] | 0.0f));
+    if (d.arrive) d.arrive += static_cast<uint32_t>(arrive_late) * 60;
+    d.load = static_cast<int>(item["load"] | 0.0f);
     std::string text = d.arrive ? tessera::fill(plugin->text("arrives"), "t", tessera::clock_text(d.arrive)) : "";
     if (d.changes > 0) text = joined(text, tessera::format(plugin->text("changes"), static_cast<long>(d.changes)));
     snprintf(d.to, sizeof d.to, "%s", text.c_str());
@@ -199,9 +250,12 @@ class Rows {
       right = width_ - when_w - (when_w ? ui::px(6) : 0);
     }
     if (r.track) {
-      // The platform only where it leaves the destination room for a few letters.
+      // The platform only where it leaves the destination room for a few letters, judged against the widest countdown
+      // ("88 min"), so it does not come and go as the minutes tick.
       const int track_w = track.empty() ? 0 : ui::text_width(track, Font::BODY) + ui::px(2);
-      const bool fits = track_w && right - x - track_w - ui::px(6) >= width_ / 4;
+      const int widest = ui::text_width(tessera::format(owner_->text("minutes"), 88), Font::TITLE) + ui::px(8);
+      const int fit_right = std::min(right, width_ - widest);
+      const bool fits = track_w && fit_right - x - track_w - ui::px(6) >= width_ / 4;
       ui::set_text(r.track, fits ? track : std::string());
       ui::set_color(r.track, moved ? ink() : muted());   // a new platform in full ink: it stands out
       lv_obj_set_size(r.track, std::max(1, fits ? track_w : 0), ui::line_height(Font::BODY));
@@ -225,14 +279,16 @@ class Rows {
     return late.empty() ? std::string(d.to) : std::string(d.to) + "  " + late;
   }
 
-  std::string track_text(const char *track) const {
+  // "Pl. 7" for a train, "Stand D" for a bus, tram, boat or cable car (German has a word for each: Gleis, Kante).
+  std::string track_text(const char *track, uint8_t kind = RAIL) const {
     if (!show_track_ || !track[0]) return "";
-    return tessera::fill(owner_->text("track"), "p", track);
+    return tessera::fill(owner_->text(kind == RAIL ? "track" : "stand"), "p", track);
   }
 
-  // How long until a departure leaves. `exact`: to the second (12:05, 0:42), for the next one; else whole minutes. An
-  // hour or more away is a time of day.
+  // How long until a departure leaves: whole minutes ("8 min"), and for the next one to the second in its last two
+  // minutes (1:42, 0:42), so a countdown never reads as a time of day. An hour or more away is a time of day.
   std::string when_text(uint32_t at, uint32_t now, bool exact = false) const {
+    if (exact && at > now && at - now >= 120) exact = false;
     if (exact) {
       if (at <= now) return owner_->text("now");
       const uint32_t left = at - now;
@@ -303,11 +359,12 @@ class NextTile : public tessera::Tile, public Rows {
     const std::string title = trip_ ? (from.empty() || to.empty() ? from + to : from + " – " + to) : from;
     card_title_ = title.c_str();
     const int foot = ui::line_height(Font::BODY);
-    // The title only where it leaves the departures their room: a row on a list, a row and a time on a single cell.
-    if (trip_) {
+    // The title (the stop of a board, "From -> To" of connections) only where it leaves the departures their room: a
+    // row on a list, a row and a time on a single cell.
+    {
       const int title_h = std::max(ui::line_height(Font::BODY), ui::line_height(Font::ICON_SMALL)) + ui::px(4);
       const int needs = head_ + (walk_ > 0 ? foot : 0) + (list_ ? 0 : ui::line_height(Font::TITLE));
-      if (height_ - title_h >= needs) make_title(c.parent, name, from, to);
+      if (height_ - title_h >= needs) make_title(c.parent, name, from, trip_ ? to : std::string());
     }
     if (list_) {
       const int row = head_ + gap_;
@@ -367,8 +424,9 @@ class NextTile : public tessera::Tile, public Rows {
     if (look_ == Look::BOARD) {
       ui::set_card_color(tessera::CardColor::INSTRUMENT);
     } else if (alarm_ && walk_ > 0) {
-      tinted_ = go;
-      ui::set_card_color(go ? tessera::CardColor::ORANGE : tessera::CardColor::NONE);
+      tinted_ = go && leave_shown_;   // never a colour alone: only where "Leave now" stands on the tile
+
+      ui::set_card_color(tinted_ ? tessera::CardColor::ORANGE : tessera::CardColor::NONE);
     }
     if (list_) paint_list(next, why, now);
     else paint_single(next, why, now);
@@ -386,10 +444,12 @@ class NextTile : public tessera::Tile, public Rows {
     if (later_) ui::set_color(later_, muted());
     if (note_) ui::set_color(note_, muted());
     paint_title();
+    on_tick(tessera::epoch());   // the tones and the new platforms' ink, as the last tick had them
   }
 
   // Every tap opens the card. On a list of connections a tap on a row opens that connection's legs at once.
   void on_tap() override {
+    if (departures_.empty()) return;   // no stop chosen, or no times yet: there is no card to show
     owner_->trip = trip_;
     snprintf(owner_->from_id, sizeof owner_->from_id, "%s", from_id_);
     snprintf(owner_->to_id, sizeof owner_->to_id, "%s", to_id_);
@@ -413,8 +473,8 @@ class NextTile : public tessera::Tile, public Rows {
   }
 
  private:
-  // The title of a tile of connections: "From -> To" with the arrow an icon of the set; while a stop is not chosen, the
-  // tile's name from the editor or the one stop there is.
+  // The title: "From -> To" with the arrow an icon of the set on a tile of connections; on a board, or while a stop is
+  // not chosen, the stop there is, or else the tile's name from the editor.
   void make_title(lv_obj_t *parent, const std::string &name, const std::string &from, const std::string &to) {
     if (name.empty() && from.empty() && to.empty()) return;
     const int body = ui::line_height(Font::BODY), icon = ui::line_height(Font::ICON_SMALL);
@@ -422,7 +482,7 @@ class NextTile : public tessera::Tile, public Rows {
     top_ = line + ui::px(4);
     title_from_ = ui::label(parent, Font::BODY, muted());
     if (from.empty() || to.empty()) {
-      const std::string alone = !name.empty() ? name : from + to;
+      const std::string alone = !(from + to).empty() ? from + to : name;
       ui::set_text(title_from_, alone);
       lv_obj_set_size(title_from_, width_, body);
       lv_obj_set_pos(title_from_, 0, (line - body) / 2);
@@ -475,6 +535,7 @@ class NextTile : public tessera::Tile, public Rows {
 
   void paint_single(const std::vector<const Departure *> &next, const char *why, uint32_t now) {
     Row &r = rows_[0];
+    leave_shown_ = false;
     if (why) {
       place_row(r, "", "", "", false, "");
       big_text(owner_->text(why), Font::BODY_LARGE, muted());
@@ -497,11 +558,14 @@ class NextTile : public tessera::Tile, public Rows {
       ui::set_text(later_, "");
       return;
     }
-    const std::string track = track_text(d.track);
+    const std::string track = track_text(d.track, d.kind);
     if (walk_ > 0) {
       std::string leave;
       const bool go = leave_text(d, now, leave);
-      ui::set_text(later_, first_fitting({joined(leave, track), leave}, width_));
+      const std::string old = stale_ ? std::string(owner_->text("old")) : std::string();
+      const std::string text = first_fitting({joined(joined(leave, old), track), joined(leave, old), leave}, width_);
+      ui::set_text(later_, text);
+      leave_shown_ = !text.empty();
       paint_leave(later_, go);
       return;
     }
@@ -550,6 +614,7 @@ class NextTile : public tessera::Tile, public Rows {
     for (size_t i = 0; i < rows_.size(); ++i) {
       if (i == 0 && why) {
         place_row(rows_[0], "", owner_->text(why), "", false, "");
+        ui::set_color(rows_[0].to, muted());   // a state, not a departure: the quieter words
         continue;
       }
       if (why || i >= next.size()) {
@@ -557,21 +622,27 @@ class NextTile : public tessera::Tile, public Rows {
         continue;
       }
       const Departure &d = *next[i];
-      place_row(rows_[i], d.badge, with_delay(d), track_text(d.track), d.moved, when_text(d.at, now, i == 0), d.kind);
+      place_row(rows_[i], d.badge, with_delay(d), track_text(d.track, d.kind), d.moved, when_text(d.at, now, i == 0), d.kind);
       listed_.push_back(d.plan);
     }
     // The bottom line: when to leave for the first one (with a walk to the stop), or that the times may be old.
     std::string note;
     bool go = false;
-    if (!why && walk_ > 0 && leave_room_) go = leave_text(*next[0], now, note);
-    else if (!why && stale_ && note_room_) note = owner_->text("old");
-    ui::set_text(note_, first_fitting({note}, width_));
+    if (!why && walk_ > 0 && leave_room_) {
+      go = leave_text(*next[0], now, note);
+      if (stale_) note = first_fitting({joined(note, owner_->text("old")), note}, width_);
+    } else if (!why && stale_ && note_room_) {
+      note = owner_->text("old");
+    }
+    const std::string shown = first_fitting({note}, width_);
+    ui::set_text(note_, shown);
+    leave_shown_ = go && !shown.empty();
     paint_leave(note_, go);
   }
 
   bool trip_ = false, direct_ = false, alarm_ = true;
   int height_ = 0, top_ = 0, walk_ = 0, tile_ = -1;
-  bool list_ = false, stale_ = false, note_room_ = false, leave_room_ = false;
+  bool list_ = false, stale_ = false, note_room_ = false, leave_room_ = false, leave_shown_ = false;
   char from_id_[16] = {}, to_id_[16] = {};
   tessera::Text wait_, card_title_;
   tessera::List<Row> rows_;
@@ -673,12 +744,15 @@ class ListCard : public tessera::Card, public Rows {
     }
     owner_->pick = 0;   // used: a card opened another way starts at the list
     show_mode();
+    on_tick(tessera::epoch());   // drawn at once, not a second later
   }
 
   void on_state(JsonObjectConst data) override {
     tessera::List<Departure> fresh;
     parse_all(data, trip_, owner_, fresh);
-    if (fresh.empty()) return;
+    stale_ = data["stale"] | false;
+    wait_ = data["wait"] | "";
+    if (fresh.empty() && !wait_.empty()) return;   // no answer: keep what the tile handed over
     items_.clear();
     for (size_t i = 0; i < fresh.size(); ++i)
       if (!direct_ || fresh[i].changes == 0) items_.push_back(fresh[i]);
@@ -686,6 +760,9 @@ class ListCard : public tessera::Card, public Rows {
 
   void on_tick(uint32_t now) override {
     now_ = now;
+    // The legs of the connection on the card are asked again every 90 seconds, for new delays and platforms; the last
+    // answer stays until the new one is there.
+    if (pick_ && state_ == SHOWN && !asked_ && now && now >= loaded_at_ + 90) ask(pick_, true);
     if (pick_) paint_legs(now);
     else paint_list(now);
   }
@@ -711,6 +788,7 @@ class ListCard : public tessera::Card, public Rows {
       if (l) ui::set_color(l, ink());
     for (lv_obj_t *l : {head_sub_, status_, note_})
       if (l) ui::set_color(l, muted());
+    on_tick(tessera::epoch());
   }
 
   // A tap on a connection of the list shows its legs.
@@ -739,7 +817,8 @@ class ListCard : public tessera::Card, public Rows {
   void answer(JsonObjectConst m) {
     if (!asked_ || (m["re"] | 0u) != asked_) return;
     asked_ = 0;
-    legs_.clear();
+    const bool refresh = refreshing_;
+    refreshing_ = false;
     tessera::List<Leg> all;
     tessera::List<uint16_t> starts;   // where each connection's legs begin in `all`
     if (m["ok"] | false) {
@@ -768,24 +847,39 @@ class ListCard : public tessera::Card, public Rows {
         all.push_back(l);
       }
     }
-    // The connection that leaves at the time tapped, or within two minutes of it (a walk first can move it). Never a
-    // neighbour: without it the card says it has no details.
+    // The connection that leaves at the time tapped, or within two minutes of it. Each is known by its first leg that
+    // has a time: a walk the service sends without one is passed over. Never a neighbour: without it the card says it
+    // has no details.
     size_t chosen = starts.size();
     uint32_t best = 121;
     for (size_t g = 0; g < starts.size(); ++g) {
-      const uint32_t dep = all[starts[g]].dep;
+      const size_t end = g + 1 < starts.size() ? starts[g + 1] : all.size();
+      uint32_t dep = 0;
+      for (size_t i = starts[g]; i < end && !dep; ++i) dep = all[i].dep;
+      if (!dep) continue;
       const uint32_t off = dep > pick_ ? dep - pick_ : pick_ - dep;
       if (off < best) {
         best = off;
         chosen = g;
       }
     }
-    if (chosen < starts.size()) {
-      const size_t end = chosen + 1 < starts.size() ? starts[chosen + 1] : all.size();
-      for (size_t i = starts[chosen]; i < end; ++i) legs_.push_back(all[i]);
+    if (chosen >= starts.size()) {
+      // Nothing for it: a refresh keeps the legs it has (and tries again later), a first ask says it has no details.
+      if (!refresh) {
+        legs_.clear();
+        state_ = FAILED;
+        loaded_ = 0;
+      }
+      loaded_at_ = now_;
+      tessera::refresh();
+      return;
     }
-    state_ = legs_.empty() ? FAILED : SHOWN;
-    loaded_ = legs_.empty() ? 0 : pick_;
+    legs_.clear();
+    const size_t end = chosen + 1 < starts.size() ? starts[chosen + 1] : all.size();
+    for (size_t i = starts[chosen]; i < end; ++i) legs_.push_back(all[i]);
+    state_ = SHOWN;
+    loaded_ = pick_;
+    loaded_at_ = now_;
     tessera::refresh();
   }
 
@@ -803,14 +897,23 @@ class ListCard : public tessera::Card, public Rows {
   // two stops and its time of departure.
   void choose(uint32_t plan) {
     pick_ = plan;
+    for (size_t i = 0; i < items_.size(); ++i)
+      if (items_[i].plan == plan) chosen_ = items_[i];   // kept, so the card stays on it after it leaves the list
     if (loaded_ == plan && state_ == SHOWN) return;
     legs_.clear();
     state_ = FAILED;
+    ask(plan, false);
+  }
+
+  // Ask the app for the legs of the connection that leaves at `plan`, by its two stops and its time of departure in
+  // Swiss time, as the service reads it.
+  void ask(uint32_t plan, bool refresh) {
     if (!from_id_[0] || !to_id_[0]) return;
-    const tessera::LocalTime t = tessera::local_time(plan);
+    int y, mo, d, h, mi;
+    swiss_time(plan, y, mo, d, h, mi);
     char date[16], time[8];
-    snprintf(date, sizeof date, "%04d-%02d-%02d", t.year, t.month, t.day);
-    snprintf(time, sizeof time, "%02d:%02d", t.hour, t.minute);
+    snprintf(date, sizeof date, "%04d-%02d-%02d", y, mo, d);
+    snprintf(time, sizeof time, "%02d:%02d", h, mi);
     JsonDocument request;
     request["ask"] = "fetch:legs";
     request["data"]["from"] = from_id_;
@@ -818,13 +921,15 @@ class ListCard : public tessera::Card, public Rows {
     request["data"]["date"] = date;
     request["data"]["time"] = time;
     asked_ = tessera::send(owner_, request.as<JsonObjectConst>());
-    state_ = asked_ ? ASKING : FAILED;
+    refreshing_ = refresh && asked_;
+    if (!refresh) state_ = asked_ ? ASKING : FAILED;
+    if (refresh && !asked_) loaded_at_ = now_;   // could not ask: try again in 90 seconds
   }
 
   const Departure *picked() const {
     for (size_t i = 0; i < items_.size(); ++i)
       if (items_[i].plan == pick_) return &items_[i];
-    return nullptr;
+    return chosen_.plan == pick_ && pick_ ? &chosen_ : nullptr;   // it left the list: the card keeps showing it
   }
 
   // Empty what the other view shows: the list while the legs show, the legs while the list does. The next paint
@@ -870,7 +975,17 @@ class ListCard : public tessera::Card, public Rows {
       if (!now || d.at + 30 >= now + static_cast<uint32_t>(walk_) * 60) next.push_back(&d);
     }
     listed_.clear();
-    ui::set_text(note_, next.empty() ? std::string(owner_->text(!now ? "waiting" : "none")) : std::string());
+    const char *why = !now ? "waiting" : wait_ == "asking" ? "waiting" : !wait_.empty() ? "failed" : "none";
+    ui::set_text(note_, next.empty() ? std::string(owner_->text(why))
+                                     : stale_ && (trip_ ? next.size() < trips_.size() : next.size() < rows_.size())
+                                           ? std::string(owner_->text("old"))
+                                           : std::string());
+    // "Times may be old" stands under the last row, where a row is free for it.
+    const size_t used = std::min(next.size(), trip_ ? trips_.size() : rows_.size());
+    const int below = static_cast<int>(used) * row_h_;
+    const bool fits_below = below + ui::line_height(Font::BODY_LARGE) <= height_;
+    if (!next.empty() && !fits_below) ui::set_text(note_, "");
+    lv_obj_set_pos(note_, 0, next.empty() || !fits_below ? 0 : below);
     if (!trip_) {
       for (size_t i = 0; i < rows_.size(); ++i) {
         if (i >= next.size()) {
@@ -878,7 +993,7 @@ class ListCard : public tessera::Card, public Rows {
           continue;
         }
         const Departure &d = *next[i];
-        place_row(rows_[i], d.badge, with_delay(d), track_text(d.track), d.moved, when_text(d.at, now, i == 0),
+        place_row(rows_[i], d.badge, with_delay(d), track_text(d.track, d.kind), d.moved, when_text(d.at, now, i == 0),
                   d.kind);
       }
       return;
@@ -910,7 +1025,7 @@ class ListCard : public tessera::Card, public Rows {
       lv_obj_set_size(r.main, main_w, ui::line_height(Font::BODY_LARGE));
       lv_obj_set_pos(r.main, x, r.y + (head_ - ui::line_height(Font::BODY_LARGE)) / 2);
       const std::string time = duration_text(d.plan, d.arrive), changes = changes_text(d.changes);
-      const std::string track = track_text(d.track), load = load_text(d.load);
+      const std::string track = track_text(d.track, d.kind), load = load_text(d.load);
       const int sub_w = std::max(1, width_ - x);
       ui::set_text(r.sub, first_fitting({joined(joined(joined(time, changes), track), load),
                                          joined(joined(time, changes), track), joined(time, changes), time},
@@ -985,7 +1100,9 @@ class ListCard : public tessera::Card, public Rows {
       if (i > 0 && !l.walk && !legs_[i - 1].walk && legs_[i - 1].arr && l.dep > legs_[i - 1].arr)
         change = tessera::format(owner_->text("change_min"), static_cast<long>((l.dep - legs_[i - 1].arr) / 60));
       const int need = (change.empty() ? 0 : line) + (l.walk ? line : head_ + 2 * line) + gap_;
-      if (y + need > height_) break;
+      // Room for this leg, and for the "+N more" line under it when legs follow.
+      const int more_h = i + 1 < legs_.size() ? ui::line_height(Font::BODY_LARGE) : 0;
+      if (y + need + more_h > height_) break;
       ui::set_text(p.change, change);
       if (!change.empty()) {
         lv_obj_set_size(p.change, width_ - indent, body);
@@ -1013,19 +1130,29 @@ class ListCard : public tessera::Card, public Rows {
       std::string dep = (l.dep ? tessera::clock_text(l.dep) + "  " : std::string()) + l.from;
       const std::string late = late_text(l.late);
       if (!late.empty()) dep += "  " + late;
-      place_line(p.dep, p.dtrack, dep, track_text(l.ftrack), l.moved, indent, y);
+      place_line(p.dep, p.dtrack, dep, track_text(l.ftrack, l.kind), l.moved, indent, y);
       y += line;
       place_line(p.arr, p.atrack, (l.arr ? tessera::clock_text(l.arr) + "  " : std::string()) + l.to,
-                 track_text(l.ttrack), false, indent, y);
+                 track_text(l.ttrack, l.kind), false, indent, y);
       y += line + gap_;
       ++shown;
     }
     for (size_t i = shown; i < parts_.size(); ++i) hide_leg(parts_[i]);
+    // Legs that did not fit (or past the card's five): how many more there are.
+    const size_t more = legs_.size() - shown;
+    if (more) {
+      ui::set_text(status_, tessera::format(owner_->text("more_legs"), static_cast<long>(more)));
+      lv_obj_set_size(status_, width_, ui::line_height(Font::BODY_LARGE));
+      lv_obj_set_pos(status_, 0, y);
+    }
   }
 
   bool trip_ = false, direct_ = false;
   int height_ = 0, row_h_ = 0, walk_ = 0;
-  uint32_t now_ = 0, pick_ = 0, loaded_ = 0, asked_ = 0;
+  uint32_t now_ = 0, pick_ = 0, loaded_ = 0, asked_ = 0, loaded_at_ = 0;
+  bool refreshing_ = false, stale_ = false;
+  tessera::Text wait_;
+  Departure chosen_;
   State state_ = FAILED;
   char from_id_[16] = {}, to_id_[16] = {};
   tessera::List<Departure> items_;
